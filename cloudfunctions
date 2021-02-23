@@ -1,0 +1,212 @@
+const functions = require('firebase-functions');
+const admin = require('firebase-admin');
+admin.initializeApp();
+
+exports.onFollowUser = functions.firestore.document('/followers/{userId}/userFollowers/{followerId}')
+.onCreate(async (snapshot,context) => {
+    console.log(snapshot.data());
+    const userId = context.params.userId;
+    const followerId = context.params.followerId;
+    const followedUserPostsRef = admin.firestore().collection('posts').doc(userId).collection('userPosts');
+    const followedUserRecentPostsRef = admin.firestore().collection('posts').doc(userId).collection('userPosts').orderBy('timestamp').limit(2);
+    const userFeedRef = admin.firestore().collection('feeds').doc(followerId).collection('userFeed');
+    
+    const followedUserRecentPostsSnapshot = await followedUserRecentPostsRef.get();
+    followedUserRecentPostsSnapshot.forEach(doc => {
+        if(doc.exists){
+            userFeedRef.doc(doc.id).set(doc.data());
+
+        }
+    });
+    const followedUserPostsSnapshot = await followedUserPostsRef.get();
+    followedUserPostsSnapshot.forEach(doc => {
+        if(doc.exists){
+            userFeedRef.doc(doc.id).set(doc.data());
+
+        }
+    });
+
+});
+
+exports.onFollowCommunity = functions.firestore.document('/communities/{communityId}/members/{followerId}')
+.onCreate(async (snapshot,context) => {
+    console.log(snapshot.data());
+    const communityId = context.params.communityId;
+    const followerId = context.params.followerId;
+    const followedCommunityPostsRef = admin.firestore().collection('communities').doc(communityId).collection('Posts').orderBy('upvotes').orderBy('timestamp');
+    const followedCommunityRecentPostsRef = admin.firestore().collection('communities').doc(communityId).collection('Posts').orderBy('upvotes').orderBy('timestamp').limit(2);
+
+    const userFeedRef = admin.firestore().collection('feeds').doc(followerId).collection('userCommFeed');
+
+    const followedCommunityRecentPostsSnapshot = await followedCommunityRecentPostsRef.get();
+    followedCommunityRecentPostsSnapshot.forEach(doc => {
+        if(doc.exists){
+            userFeedRef.doc(doc.id).set(doc.data());
+
+        }
+    });
+    const followedCommunityPostsSnapshot = await followedCommunityPostsRef.get();
+    followedCommunityPostsSnapshot.forEach(doc => {
+        if(doc.exists){
+            userFeedRef.doc(doc.id).set(doc.data());
+
+        }
+    });
+
+});
+
+exports.onCreateMessage = functions.firestore.document('/messages/{groupId}')
+.onCreate(async (snapshot,context) => {
+    console.log(snapshot.data());
+    const groupId = context.params.groupId;
+    const MessageIdRef = admin.firestore().collection('messages').doc(groupId);
+    var ids = groupId.split('-');
+    const [userId1, peerId2] = ids
+
+    const followedUserPostsSnapshot = await MessageIdRef.get();
+    followedUserPostsSnapshot.then(doc => {
+        if(doc.exists){
+            doc.ref.setData({
+              userId1: true,
+              peerId2: true,
+            })
+
+        }
+    });
+
+});
+
+
+exports.onUnfollowerUser = functions.firestore.document('/followers/{userId}/userFollowers/{followerId}')
+.onDelete( async (snapshot,context) =>{
+    const communityId = context.params.communityId;
+    const followerId = context.params.followerId;
+    const userFeedRef = admin.firestore().collection('feeds').doc(followerId).
+    collection('userFeed').where('communityId', '==', communityId);
+    const userPostsSnapshot =  await userFeedRef.get();
+    userPostsSnapshot.forEach(doc => {
+    
+            if(doc.exists){
+                doc.ref.delete();
+    
+            }
+    });
+});
+
+exports.onUnfollowerCommunity = functions.firestore.document('/communities/{communityId}/members/{followerId}')
+.onDelete( async (snapshot,context) =>{
+    const communityId = context.params.communityId;
+    const followerId = context.params.followerId;
+    const userFeedRef = admin.firestore().collection('feeds').doc(followerId).
+    collection('userCommFeed').where('communityId', '==', communityId);
+    const userPostsSnapshot =  await userFeedRef.get();
+    userPostsSnapshot.forEach(doc => {
+    
+            if(doc.exists){
+                doc.ref.delete();
+    
+            }
+    });
+});
+
+
+
+exports.onUploadPost = functions.firestore.document('posts/{userId}/usersPosts/{postId}')
+.onCreate(async (snapshot,context) => {
+    console.log(snapshot.data());
+    const userId = context.params.userId;
+    const postId = context.params.postId;
+    const userFollowersRef = admin.firestore().collection('followers').doc(userId).collection('userFollowers');
+    const userFollowersSnapshot = await userFollowersRef.get();
+    userFollowersSnapshot.forEach(
+        doc => {
+            admin.firestore().collection('feeds').doc(doc.id).collection('userFeed').doc(postId).set(snapshot.data());
+
+        }
+    );
+});
+
+exports.onUpdatePost = functions.firestore
+  .document('/posts/{userId}/usersPosts/{postId}')
+  .onUpdate(async (snapshot, context) => {
+    const userId = context.params.userId;
+    const postId = context.params.postId;
+    const newPostData = snapshot.after.data();
+    console.log(newPostData);
+    const userFollowersRef = admin
+      .firestore()
+      .collection('followers')
+      .doc(userId)
+      .collection('userFollowers');
+    const userFollowersSnapshot = await userFollowersRef.get();
+    userFollowersSnapshot.forEach(async userDoc => {
+      const postRef = admin
+        .firestore()
+        .collection('feeds')
+        .doc(userDoc.id)
+        .collection('userFeed');
+      const postDoc = await postRef.doc(postId).get();
+      if (postDoc.exists) {
+        postDoc.ref.update(newPostData);
+      }
+    });
+  });
+ 
+
+
+  exports.sendNotification = functions.firestore.document('messages/{groupId1}/{groupId2}/{message}').onCreate((snap, context) => {
+    console.log('----------------start function--------------------')
+
+    const doc = snap.data()
+    console.log(doc)
+
+    const idFrom = doc.idFrom
+    const idTo = doc.idTo
+    const contentMessage = doc.content
+
+    // Get push token user to (receive)
+    admin
+      .firestore()
+      .collection('users')
+      .where('id', '==', idTo)
+      .get()
+      .then(querySnapshot => {
+        querySnapshot.forEach(userTo => {
+          console.log(`Found user to: ${userTo.data().name}`)
+          if (userTo.data().pushToken && userTo.data().chattingWith !== idFrom) {
+            // Get info user from (sent)
+            admin
+              .firestore()
+              .collection('users')
+              .where('id', '==', idFrom)
+              .get()
+              .then(querySnapshot2 => {
+                querySnapshot2.forEach(userFrom => {
+                  console.log(`Found user from: ${userFrom.data().name}`)
+                  const payload = {
+                    notification: {
+                      title: `You have a message from "${userFrom.data().name}"`,
+                      body: contentMessage,
+                      badge: '1',
+                      sound: 'default'
+                    }
+                  }
+                  // Let push to the target device
+                  admin
+                    .messaging()
+                    .sendToDevice(userTo.data().pushToken, payload)
+                    .then(response => {
+                      console.log('Successfully sent message:', response)
+                    })
+                    .catch(error => {
+                      console.log('Error sending message:', error)
+                    })
+                })
+              })
+          } else {
+            console.log('Can not find pushToken target user')
+          }
+        })
+      })
+    return null
+  })
